@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYD Web Flasher</title>
+<style>
+  :root { --bg:#0f1419; --card:#1a2129; --line:#2a333d; --fg:#e6edf3; --mut:#8b98a5; --acc:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans Thai",sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:1rem; margin:0 0 12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { background:#238636; color:#fff; border:0; border-radius:8px; padding:10px 16px; font-size:.95rem; cursor:pointer; font-family:inherit; }
+  button.sec { background:#30363d; }
+  button.danger { background:#8e1519; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  select, input[type=text] { background:#0d1117; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:.9rem; }
+  .modes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .modes label { border:1px solid var(--line); border-radius:8px; padding:8px 12px; cursor:pointer; font-size:.9rem; }
+  .modes input { margin-right:6px; }
+  .modes label:has(input:checked) { border-color:var(--acc); background:#12261a; }
+  .file { display:grid; grid-template-columns:110px 1fr; gap:8px; align-items:center; margin-bottom:8px; font-size:.9rem; }
+  .file code { color:var(--mut); font-size:.8rem; }
+  .file input[type=file] { font-size:.85rem; color:var(--mut); width:100%; }
+  .hint { color:var(--mut); font-size:.85rem; margin:8px 0 0; }
+  .status { font-size:.9rem; margin-left:auto; color:var(--mut); }
+  .status.ok { color:var(--acc); }
+  progress { width:100%; height:14px; margin-top:12px; accent-color:var(--acc); }
+  pre { background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:260px; overflow:auto; font-size:.78rem; margin:0; white-space:pre-wrap; word-break:break-all; }
+  .banner { background:#3b2300; border:1px solid var(--warn); color:#f0c674; border-radius:8px; padding:10px 12px; margin-bottom:16px; font-size:.9rem; display:none; }
+  label.chk { font-size:.9rem; color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>CYD Web Flasher</h1>
+  <p class="sub">แฟลชไฟล์ .bin ลง ESP32 CYD 2.8" ผ่านเบราว์เซอร์ (Chrome / Edge)</p>
+
+  <div class="banner" id="noSerial">เบราว์เซอร์นี้ไม่รองรับ Web Serial — ใช้ Chrome หรือ Edge บนคอมพิวเตอร์ และเปิดหน้าผ่าน HTTPS</div>
+
+  <!-- 1. Connect -->
+  <div class="card">
+    <h2>1. เชื่อมต่อบอร์ด</h2>
+    <div class="row">
+      <select id="baud">
+        <option value="921600">921600</option>
+        <option value="460800" selected>460800</option>
+        <option value="115200">115200</option>
+      </select>
+      <button id="btnConnect">เชื่อมต่อ</button>
+      <button id="btnDisconnect" class="sec" disabled>ตัดการเชื่อมต่อ</button>
+      <span class="status" id="chipInfo">ยังไม่ได้เชื่อมต่อ</span>
+    </div>
+    <p class="hint">ถ้าเชื่อมต่อไม่ติด: กดปุ่ม BOOT ค้างไว้ แล้วกดเชื่อมต่อ · ถ้าแฟลชพังบ่อยให้ลด baud เหลือ 115200</p>
+  </div>
+
+  <!-- 2. Files -->
+  <div class="card">
+    <h2>2. เลือกไฟล์</h2>
+    <div class="modes">
+      <label><input type="radio" name="mode" value="merged" checked>ไฟล์รวม (merged)</label>
+      <label><input type="radio" name="mode" value="app">อัปเดตเฉพาะแอป</label>
+      <label><input type="radio" name="mode" value="split">แยก 4 ไฟล์</label>
+      <label id="presetLabel" style="display:none"><input type="radio" name="mode" value="preset">เฟิร์มแวร์จากเว็บ</label>
+    </div>
+
+    <div id="filesBox"></div>
+
+    <div class="row" style="margin-top:8px">
+      <label class="chk"><input type="checkbox" id="eraseAll"> ลบแฟลชทั้งหมดก่อน (ล้างค่าที่เซฟไว้ด้วย)</label>
+    </div>
+  </div>
+
+  <!-- 3. Flash -->
+  <div class="card">
+    <h2>3. แฟลช</h2>
+    <div class="row">
+      <button id="btnFlash" disabled>เริ่มแฟลช</button>
+      <button id="btnErase" class="danger" disabled>ลบแฟลชอย่างเดียว</button>
+      <span class="status" id="flashStatus"></span>
+    </div>
+    <progress id="prog" value="0" max="100"></progress>
+  </div>
+
+  <!-- 4. Log / Monitor -->
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Log / Serial Monitor</h2>
+      <span style="margin-left:auto"></span>
+      <button id="btnMonitor" class="sec">เปิด Serial Monitor (115200)</button>
+      <button id="btnClear" class="sec">ล้าง</button>
+    </div>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script type="module">
+import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.4.5/bundle.js";
+
+// ===== ตั้งค่า: ถ้าอยากให้ผู้ใช้กดแฟลชได้เลยโดยไม่ต้องเลือกไฟล์ =====
+// วางไฟล์ไว้ในโฟลเดอร์เดียวกับหน้านี้ แล้วใส่ชื่อไฟล์ (ปล่อยว่าง = ปิดฟีเจอร์นี้)
+const PRESET_FIRMWARE = { url: "", offset: 0x0, label: "" };
+// ตัวอย่าง: { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.0.0" }
+
+const LAYOUTS = {
+  merged: [{ key: "merged", name: "Merged bin", addr: 0x0 }],
+  app:    [{ key: "app",    name: "App (firmware)", addr: 0x10000 }],
+  split:  [
+    { key: "boot",  name: "Bootloader", addr: 0x1000 },
+    { key: "part",  name: "Partitions", addr: 0x8000 },
+    { key: "otad",  name: "boot_app0",  addr: 0xE000, optional: true },
+    { key: "app",   name: "App",        addr: 0x10000 },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+const log = (s = "", nl = true) => {
+  logEl.textContent += s + (nl ? "\n" : "");
+  if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-150000);
+  logEl.scrollTop = logEl.scrollHeight;
+};
+const terminal = { clean() {}, writeLine: (d) => log(d), write: (d) => log(d, false) };
+
+let device = null, transport = null, esploader = null, busy = false;
+let monitor = { reader: null, running: false };
+const fileData = {}; // key -> { name, data(binary string) }
+
+if (!("serial" in navigator)) {
+  $("noSerial").style.display = "block";
+  $("btnConnect").disabled = true;
+  $("btnMonitor").disabled = true;
+}
+
+if (PRESET_FIRMWARE.url) {
+  $("presetLabel").style.display = "";
+  $("presetLabel").lastChild.textContent = "เฟิร์มแวร์จากเว็บ " + (PRESET_FIRMWARE.label || "");
+  $("presetLabel").querySelector("input").checked = true;
+}
+
+// ---------- UI: file pickers ----------
+const currentMode = () => document.querySelector('input[name="mode"]:checked').value;
+const hex = (n) => "0x" + n.toString(16).toUpperCase();
+
+function renderFiles() {
+  const mode = currentMode();
+  const box = $("filesBox");
+  box.innerHTML = "";
+  if (mode === "preset") {
+    box.innerHTML = `<p class="hint">จะดาวน์โหลด <code>${PRESET_FIRMWARE.url}</code> แล้วแฟลชที่ ${hex(PRESET_FIRMWARE.offset)}</p>`;
+    updateButtons();
+    return;
+  }
+  for (const f of LAYOUTS[mode]) {
+    const row = document.createElement("div");
+    row.className = "file";
+    row.innerHTML = `<div>${f.name}<br><code>${hex(f.addr)}${f.optional ? " · ไม่บังคับ" : ""}</code></div>
+                     <input type="file" accept=".bin" data-key="${f.key}">`;
+    box.appendChild(row);
+  }
+  const hints = {
+    merged: "ไฟล์ .merged.bin ที่รวม bootloader + partitions + app แล้ว — แบบที่แนะนำ",
+    app: "ใช้ตอนบอร์ดเคยแฟลชโปรเจกต์ที่ partition เหมือนกันมาแล้ว — เร็วที่สุด",
+    split: "ใช้ตอนไม่มีไฟล์ merged — ตำแหน่งนี้สำหรับ ESP32 รุ่นธรรมดา (CYD)",
+  };
+  box.insertAdjacentHTML("beforeend", `<p class="hint">${hints[mode]}</p>`);
+  box.querySelectorAll("input[type=file]").forEach((inp) => inp.addEventListener("change", onPick));
+  for (const k in fileData) delete fileData[k];
+  updateButtons();
+}
+
+function toBinaryString(buf) {
+  const u8 = new Uint8Array(buf);
+  let s = "";
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  return s;
+}
+
+async function onPick(e) {
+  const key = e.target.dataset.key;
+  const file = e.target.files[0];
+  if (!file) { delete fileData[key]; updateButtons(); return; }
+  fileData[key] = { name: file.name, data: toBinaryString(await file.arrayBuffer()) };
+  log(`เลือกไฟล์ ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+  updateButtons();
+}
+
+function filesReady() {
+  const mode = currentMode();
+  if (mode === "preset") return true;
+  return LAYOUTS[mode].every((f) => f.optional || fileData[f.key]);
+}
+
+function updateButtons() {
+  const connected = !!esploader;
+  $("btnConnect").disabled = busy || connected || !("serial" in navigator);
+  $("btnDisconnect").disabled = busy || !connected;
+  $("btnFlash").disabled = busy || !connected || !filesReady();
+  $("btnErase").disabled = busy || !connected;
+  $("btnMonitor").disabled = busy || connected || !("serial" in navigator);
+}
+
+document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", renderFiles));
+renderFiles();
+
+// ---------- Connect ----------
+$("btnConnect").onclick = async () => {
+  try {
+    busy = true; updateButtons();
+    await stopMonitor();
+    if (!device) device = await navigator.serial.requestPort();
+    transport = new Transport(device, false);
+    esploader = new ESPLoader({ transport, baudrate: parseInt($("baud").value), terminal, debugLogging: false });
+    const chip = await esploader.main();
+    $("chipInfo").textContent = "เชื่อมต่อแล้ว: " + chip;
+    $("chipInfo").className = "status ok";
+    if (!/ESP32(?!-[SCH])/.test(chip)) log("⚠ ชิปนี้ไม่ใช่ ESP32 รุ่นธรรมดา — ตำแหน่ง bootloader อาจต่างจาก 0x1000");
+  } catch (err) {
+    log("❌ เชื่อมต่อไม่สำเร็จ: " + (err.message || err));
+    await cleanup();
+  } finally {
+    busy = false; updateButtons();
+  }
+};
+
+$("btnDisconnect").onclick = async () => { await cleanup(); log("ตัดการเชื่อมต่อแล้ว"); };
+
+async function cleanup() {
+  try { if (transport) await transport.disconnect(); } catch {}
+  transport = null; esploader = null;
+  $("chipInfo").textContent = "ยังไม่ได้เชื่อมต่อ";
+  $("chipInfo").className = "status";
+  updateButtons();
+}
+
+async function resetBoard() {
+  try {
+    await esploader.after("hard_reset");
+  } catch {
+    await transport.setDTR(false);
+    await transport.setRTS(true);
+    await new Promise((r) => setTimeout(r, 120));
+    await transport.setRTS(false);
+  }
+}
+
+// ---------- Flash ----------
+async function buildFileArray() {
+  const mode = currentMode();
+  if (mode === "preset") {
+    log("กำลังดาวน์โหลด " + PRESET_FIRMWARE.url + " ...");
+    const res = await fetch(PRESET_FIRMWARE.url, { cache: "no-store" });
+    if (!res.ok) throw new Error("ดาวน์โหลดไม่ได้ (HTTP " + res.status + ")");
+    return [{ data: toBinaryString(await res.arrayBuffer()), address: PRESET_FIRMWARE.offset }];
+  }
+  return LAYOUTS[mode].filter((f) => fileData[f.key]).map((f) => ({ data: fileData[f.key].data, address: f.addr }));
+}
+
+$("btnFlash").onclick = async () => {
+  const prog = $("prog");
+  try {
+    busy = true; updateButtons();
+    const fileArray = await buildFileArray();
+    const total = fileArray.reduce((a, f) => a + f.data.length, 0);
+    const done = new Array(fileArray.length).fill(0);
+    $("flashStatus").textContent = "กำลังแฟลช...";
+    $("flashStatus").className = "status";
+    prog.value = 0;
+
+    if ($("eraseAll").checked) log("จะลบแฟลชทั้งหมดก่อน (ใช้เวลาประมาณ 10–20 วินาที)");
+
+    const t0 = performance.now();
+    await esploader.writeFlash({
+      fileArray,
+      flashSize: "keep",
+      flashMode: "keep",
+      flashFreq: "keep",
+      eraseAll: $("eraseAll").checked,
+      compress: true,
+      reportProgress: (i, written, size) => {
+        done[i] = (written / size) * fileArray[i].data.length;
+        const pct = Math.round((done.reduce((a, b) => a + b, 0) / total) * 100);
+        prog.value = pct;
+        $("flashStatus").textContent = `กำลังแฟลช ${pct}%`;
+      },
+    });
+    prog.value = 100;
+    const sec = ((performance.now() - t0) / 1000).toFixed(1);
+    log(`✅ แฟลชเสร็จใน ${sec} วินาที — กำลังรีเซ็ตบอร์ด`);
+    $("flashStatus").textContent = "สำเร็จ ✅";
+    $("flashStatus").className = "status ok";
+    await resetBoard();
+  } catch (err) {
+    log("❌ แฟลชไม่สำเร็จ: " + (err.message || err));
+    $("flashStatus").textContent = "ล้มเหลว";
+  } finally {
+    busy = false; updateButtons();
+  }
+};
+
+$("btnErase").onclick = async () => {
+  if (!confirm("ลบแฟลชทั้งหมด? โปรแกรมและค่าที่เซฟไว้จะหายหมด")) return;
+  try {
+    busy = true; updateButtons();
+    $("flashStatus").textContent = "กำลังลบ...";
+    await esploader.eraseFlash();
+    log("✅ ลบแฟลชเรียบร้อย");
+    $("flashStatus").textContent = "ลบแล้ว";
+  } catch (err) {
+    log("❌ ลบไม่สำเร็จ: " + (err.message || err));
+  } finally {
+    busy = false; updateButtons();
+  }
+};
+
+// ---------- Serial monitor ----------
+$("btnMonitor").onclick = async () => {
+  if (monitor.running) { await stopMonitor(); return; }
+  try {
+    if (!device) device = await navigator.serial.requestPort();
+    await device.open({ baudRate: 115200 });
+    // reset บอร์ดให้รันโปรแกรมปกติ (ไม่เข้าโหมด boot)
+    await device.setSignals({ dataTerminalReady: false, requestToSend: true });
+    await new Promise((r) => setTimeout(r, 100));
+    await device.setSignals({ dataTerminalReady: false, requestToSend: false });
+
+    monitor.running = true;
+    $("btnMonitor").textContent = "หยุด Serial Monitor";
+    $("btnConnect").disabled = true;
+    log("---- Serial Monitor 115200 ----");
+    const decoder = new TextDecoder();
+    while (monitor.running && device.readable) {
+      monitor.reader = device.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await monitor.reader.read();
+          if (done) break;
+          log(decoder.decode(value, { stream: true }), false);
+        }
+      } catch (e) {
+        if (monitor.running) log("\n[อ่านข้อมูลผิดพลาด: " + e.message + "]");
+      } finally {
+        monitor.reader.releaseLock();
+      }
+    }
+  } catch (err) {
+    log("❌ เปิด monitor ไม่ได้: " + (err.message || err));
+    monitor.running = false;
+  }
+  try { await device.close(); } catch {}
+  $("btnMonitor").textContent = "เปิด Serial Monitor (115200)";
+  updateButtons();
+};
+
+async function stopMonitor() {
+  if (!monitor.running) return;
+  monitor.running = false;
+  try { await monitor.reader?.cancel(); } catch {}
+  await new Promise((r) => setTimeout(r, 150));
+}
+
+$("btnClear").onclick = () => (logEl.textContent = "");
+</script>
+</body>
+</html>
