@@ -91,6 +91,23 @@
     <progress id="prog" value="0" max="100"></progress>
   </div>
 
+  <!-- OTA download -->
+  <div class="card" id="otaCard">
+    <h2>อัปเดตผ่าน WiFi (ไม่ต้องต่อสาย)</h2>
+    <p class="hint" style="margin:0 0 12px">สำหรับบอร์ดที่ลงเฟิร์มแวร์ v1.2.0 ขึ้นไปแล้ว</p>
+    <div class="row">
+      <a id="otaLink" href="#" download="firmware.bin"><button type="button" id="otaBtn">ดาวน์โหลด firmware.bin</button></a>
+      <span class="status" id="otaInfo">กำลังตรวจไฟล์...</span>
+    </div>
+    <ol class="hint" style="margin:12px 0 0;padding-left:20px;line-height:1.7">
+      <li>กดปุ่มด้านบนเพื่อเก็บไฟล์ลงมือถือ (iPhone: เลือก "ดาวน์โหลด" แล้วไฟล์จะอยู่ในแอป Files)</li>
+      <li>บนจอเกจ: ตั้งค่า → ระบบ → เปิด "ตั้งค่าผ่านเว็บ (Wi-Fi)" รอรีสตาร์ต</li>
+      <li>มือถือต่อ WiFi <b>OBD-Gauge</b> (รหัสเดียวกับรหัสตั้งค่า ค่าเริ่มต้น obd12345)</li>
+      <li>เปิด <b>http://192.168.4.1</b> → ล็อกอิน admin → เลื่อนลงล่างสุด "Firmware update"</li>
+      <li>เลือกไฟล์ firmware.bin → Upload &amp; update → รอจนเกจรีสตาร์ตเอง</li>
+    </ol>
+  </div>
+
   <!-- 4. Log / Monitor -->
   <div class="card">
     <div class="row" style="margin-bottom:10px">
@@ -109,6 +126,10 @@ import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.4.5/bundle.
 // ===== ตั้งค่า: ถ้าอยากให้ผู้ใช้กดแฟลชได้เลยโดยไม่ต้องเลือกไฟล์ =====
 // วางไฟล์ไว้ในโฟลเดอร์เดียวกับหน้านี้ แล้วใส่ชื่อไฟล์ (ปล่อยว่าง = ปิดฟีเจอร์นี้)
 const PRESET_FIRMWARE = { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.2.1" };
+
+// ไฟล์สำหรับอัปเดตผ่าน WiFi (OTA): วาง .pio/build/cyd/firmware.bin ไว้ที่ firmware/firmware.bin ใน repo
+// แก้ version ทุกครั้งที่อัปโหลดไฟล์ใหม่ (ให้ตรงกับ FW_VERSION ใน config.h) — ปล่อย url ว่าง = ซ่อนส่วนนี้
+const OTA_FIRMWARE = { url: "firmware/firmware.bin", version: "v1.2.1" };
 
 // =====================================================================
 //  USB-serial over WebUSB — ทำตัวเหมือน SerialPort ของ Web Serial
@@ -308,6 +329,24 @@ if (PRESET_FIRMWARE.url) {
   $("presetLabel").lastChild.textContent = "เฟิร์มแวร์จากเว็บ " + (PRESET_FIRMWARE.label || "");
   $("presetLabel").querySelector("input").checked = true;
 }
+
+// ---------- OTA download card ----------
+(async () => {
+  const card = $("otaCard");
+  if (!OTA_FIRMWARE.url) { card.style.display = "none"; return; }
+  $("otaLink").href = OTA_FIRMWARE.url;
+  $("otaBtn").textContent = "ดาวน์โหลด firmware.bin " + OTA_FIRMWARE.version;
+  try {
+    const r = await fetch(OTA_FIRMWARE.url, { method: "HEAD", cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const len = +r.headers.get("content-length");
+    $("otaInfo").textContent = len ? `${OTA_FIRMWARE.version} · ${(len / 1024).toFixed(0)} KB` : OTA_FIRMWARE.version;
+    $("otaInfo").className = "status ok";
+  } catch (e) {
+    $("otaInfo").textContent = "ยังไม่มีไฟล์ใน repo (" + OTA_FIRMWARE.url + ")";
+    $("otaBtn").disabled = true;
+  }
+})();
 
 // ---------- UI: file pickers ----------
 const currentMode = () => document.querySelector('input[name="mode"]:checked').value;
