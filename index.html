@@ -125,11 +125,11 @@ import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.4.5/bundle.
 
 // ===== ตั้งค่า: ถ้าอยากให้ผู้ใช้กดแฟลชได้เลยโดยไม่ต้องเลือกไฟล์ =====
 // วางไฟล์ไว้ในโฟลเดอร์เดียวกับหน้านี้ แล้วใส่ชื่อไฟล์ (ปล่อยว่าง = ปิดฟีเจอร์นี้)
-const PRESET_FIRMWARE = { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.2.1" };
+const PRESET_FIRMWARE = { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.3.0" };
 
 // ไฟล์สำหรับอัปเดตผ่าน WiFi (OTA): วาง .pio/build/cyd/firmware.bin ไว้ที่ firmware/firmware.bin ใน repo
 // แก้ version ทุกครั้งที่อัปโหลดไฟล์ใหม่ (ให้ตรงกับ FW_VERSION ใน config.h) — ปล่อย url ว่าง = ซ่อนส่วนนี้
-const OTA_FIRMWARE = { url: "firmware/firmware.bin", version: "v1.2.1" };
+const OTA_FIRMWARE = { url: "firmware/firmware.bin", version: "v1.3.0" };
 
 // =====================================================================
 //  USB-serial over WebUSB — ทำตัวเหมือน SerialPort ของ Web Serial
