@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CYD Web Flasher</title>
+<title>CYD Web Flasher By ช่างเกมส์</title>
 <style>
   :root { --bg:#0f1419; --card:#1a2129; --line:#2a333d; --fg:#e6edf3; --mut:#8b98a5; --acc:#3fb950; --warn:#d29922; --err:#f85149; }
   * { box-sizing:border-box; }
@@ -37,17 +37,17 @@
 </head>
 <body>
 <main>
-  <h1>CYD Web Flasher</h1>
+  <h1>CYD Web Flasher By ช่างเกมส์</h1>
   <p class="sub">แฟลชไฟล์ .bin ลง ESP32 CYD 2.8" ผ่านเบราว์เซอร์ (Chrome / Edge)</p>
 
-  <div class="banner" id="noSerial">เบราว์เซอร์นี้ไม่รองรับ Web Serial / WebUSB — ใช้ Chrome หรือ Edge (คอมพิวเตอร์ หรือ Android) และเปิดหน้าผ่าน HTTPS · iPhone ใช้ไม่ได้ ให้อัปเดตผ่าน WiFi (OTA) แทน</div>
+  <div class="banner" id="noSerial">เบราว์เซอร์นี้ไม่รองรับ Web Serial / WebUSB — ใช้ Chrome หรือ Edge (คอมพิวเตอร์ หรือ Android) และเปิดหน้าผ่าน HTTPS · iPhone ใช้เว็บนี้ไม่ได้ ให้อัปเดตผ่าน WiFi ของตัวจอ (OTA) แทน</div>
 
   <!-- 1. Connect -->
   <div class="card">
     <h2>1. เชื่อมต่อบอร์ด</h2>
     <div class="row">
       <select id="transportSel">
-        <option value="serial">Web Serial</option>
+        <option value="serial">Web Serial / PC</option>
         <option value="usb">WebUSB (CH340 / มือถือ Android)</option>
       </select>
       <select id="baud">
