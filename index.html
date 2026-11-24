@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CYD Web Flasher by ช่างเกมส์</title>
+<title>CYD Web Flasher</title>
 <style>
   :root { --bg:#0f1419; --card:#1a2129; --line:#2a333d; --fg:#e6edf3; --mut:#8b98a5; --acc:#3fb950; --warn:#d29922; --err:#f85149; }
   * { box-sizing:border-box; }
@@ -37,15 +37,19 @@
 </head>
 <body>
 <main>
-  <h1>CYD Web Flasher By ช่างเกมส์</h1>
+  <h1>CYD Web Flasher</h1>
   <p class="sub">แฟลชไฟล์ .bin ลง ESP32 CYD 2.8" ผ่านเบราว์เซอร์ (Chrome / Edge)</p>
 
-  <div class="banner" id="noSerial">เบราว์เซอร์นี้ไม่รองรับ Web Serial — ใช้ Chrome หรือ Edge บนคอมพิวเตอร์ และเปิดหน้าผ่าน HTTPS</div>
+  <div class="banner" id="noSerial">เบราว์เซอร์นี้ไม่รองรับ Web Serial / WebUSB — ใช้ Chrome หรือ Edge (คอมพิวเตอร์ หรือ Android) และเปิดหน้าผ่าน HTTPS · iPhone ใช้ไม่ได้ ให้อัปเดตผ่าน WiFi (OTA) แทน</div>
 
   <!-- 1. Connect -->
   <div class="card">
     <h2>1. เชื่อมต่อบอร์ด</h2>
     <div class="row">
+      <select id="transportSel">
+        <option value="serial">Web Serial</option>
+        <option value="usb">WebUSB (CH340 / มือถือ Android)</option>
+      </select>
       <select id="baud">
         <option value="921600">921600</option>
         <option value="460800" selected>460800</option>
@@ -55,7 +59,8 @@
       <button id="btnDisconnect" class="sec" disabled>ตัดการเชื่อมต่อ</button>
       <span class="status" id="chipInfo">ยังไม่ได้เชื่อมต่อ</span>
     </div>
-    <p class="hint">ถ้าเชื่อมต่อไม่ติด: กดปุ่ม BOOT ค้างไว้ แล้วกดเชื่อมต่อ · ถ้าแฟลชพังบ่อยให้ลด baud เหลือ 115200</p>
+    <p class="hint">ถ้าเชื่อมต่อไม่ติด: กดปุ่ม BOOT ค้างไว้ แล้วกดเชื่อมต่อ · ถ้าแฟลชพังบ่อยให้ลด baud เหลือ 115200<br>
+    มือถือ Android: ใช้ WebUSB + สาย OTG แล้วกด "อนุญาต" เมื่อมือถือถามสิทธิ์ USB</p>
   </div>
 
   <!-- 2. Files -->
@@ -104,7 +109,148 @@ import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.4.5/bundle.
 // ===== ตั้งค่า: ถ้าอยากให้ผู้ใช้กดแฟลชได้เลยโดยไม่ต้องเลือกไฟล์ =====
 // วางไฟล์ไว้ในโฟลเดอร์เดียวกับหน้านี้ แล้วใส่ชื่อไฟล์ (ปล่อยว่าง = ปิดฟีเจอร์นี้)
 const PRESET_FIRMWARE = { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.1.0" };
-// ตัวอย่าง: { url: "firmware/cyd-merged.bin", offset: 0x0, label: "v1.0.0" }
+
+// =====================================================================
+//  USB-serial over WebUSB — ทำตัวเหมือน SerialPort ของ Web Serial
+//  รองรับ CH340/CH341 (ไดรเวอร์ vendor) และ CH9102/CDC-ACM
+//  ใช้บน Android ที่ Chrome ยังไม่รองรับ Web Serial แบบสาย
+// =====================================================================
+const USB_FILTERS = [
+  { vendorId: 0x1a86 },              // WCH: CH340, CH341, CH9102, CH343
+  { vendorId: 0x10c4 },              // Silicon Labs CP210x (บางบอร์ด) — ใช้ได้เฉพาะถ้าเป็น CDC
+  { classCode: 0x02 },               // อุปกรณ์ CDC-ACM อื่น ๆ
+];
+
+class UsbSerialPort {
+  constructor(usbDevice) {
+    this.usb = usbDevice;
+    this.readable = null;
+    this.writable = null;
+    this.opened = false;
+    this.dtr = false;
+    this.rts = false;
+    this.connected = true;
+    this.kind = null; // "ch34x" | "cdc"
+  }
+  getInfo() { return { usbVendorId: this.usb.vendorId, usbProductId: this.usb.productId }; }
+  addEventListener() {}
+  removeEventListener() {}
+  async forget() { try { await this.usb.forget(); } catch {} }
+
+  _findInterfaces() {
+    const cfg = this.usb.configuration;
+    let dataIf = null, ctrlIf = null;
+    for (const intf of cfg.interfaces) {
+      const alt = intf.alternates[0];
+      const bulkIn = alt.endpoints.find((e) => e.type === "bulk" && e.direction === "in");
+      const bulkOut = alt.endpoints.find((e) => e.type === "bulk" && e.direction === "out");
+      if (alt.interfaceClass === 0x02) ctrlIf = intf.interfaceNumber;
+      if (bulkIn && bulkOut && !dataIf) dataIf = { num: intf.interfaceNumber, cls: alt.interfaceClass, epIn: bulkIn.endpointNumber, epOut: bulkOut.endpointNumber };
+    }
+    if (!dataIf) throw new Error("ไม่พบ endpoint ของ USB-serial");
+    // CH34x ใช้ interface class 0xFF (vendor) ส่วน CH9102/CDC ใช้ 0x0A + interface ควบคุม 0x02
+    this.kind = (this.usb.vendorId === 0x1a86 && dataIf.cls === 0xff) ? "ch34x" : "cdc";
+    this.dataIf = dataIf;
+    this.ctrlIf = ctrlIf ?? dataIf.num;
+  }
+
+  async _vendorOut(request, value, index) {
+    const r = await this.usb.controlTransferOut({ requestType: "vendor", recipient: "device", request, value, index });
+    if (r.status !== "ok") throw new Error("CH340 control 0x" + request.toString(16) + " failed");
+  }
+  async _vendorIn(request, value, index, len) {
+    return this.usb.controlTransferIn({ requestType: "vendor", recipient: "device", request, value, index }, len);
+  }
+
+  async _ch34xSetBaud(baud) {
+    let factor, divisor;
+    if (baud === 921600) { divisor = 7; factor = 0xf300; }
+    else {
+      factor = Math.floor(1532620800 / baud);
+      divisor = 3;
+      while (factor > 0xfff0 && divisor > 0) { factor >>= 3; divisor--; }
+      if (factor > 0xfff0) throw new Error("CH340 ไม่รองรับ baud " + baud);
+      factor = 0x10000 - factor;
+    }
+    divisor |= 0x80;
+    await this._vendorOut(0x9a, 0x1312, (factor & 0xff00) | divisor);
+    await this._vendorOut(0x9a, 0x0f2c, factor & 0xff);
+  }
+
+  async _applySignals() {
+    if (this.kind === "ch34x") {
+      const v = ~((this.dtr ? 0x20 : 0) | (this.rts ? 0x40 : 0)) & 0xffff;
+      await this._vendorOut(0xa4, v, 0);
+    } else {
+      await this.usb.controlTransferOut({ requestType: "class", recipient: "interface", request: 0x22,
+        value: (this.dtr ? 1 : 0) | (this.rts ? 2 : 0), index: this.ctrlIf });
+    }
+  }
+
+  async open(opts = {}) {
+    const baud = opts.baudRate || 115200;
+    if (!this.usb.opened) await this.usb.open();
+    if (!this.usb.configuration) await this.usb.selectConfiguration(1);
+    this._findInterfaces();
+    await this.usb.claimInterface(this.dataIf.num);
+    if (this.kind === "cdc" && this.ctrlIf !== this.dataIf.num) {
+      try { await this.usb.claimInterface(this.ctrlIf); } catch {}
+    }
+
+    if (this.kind === "ch34x") {
+      await this._vendorIn(0x5f, 0, 0, 2);
+      await this._vendorOut(0xa1, 0, 0);
+      await this._ch34xSetBaud(baud);
+      await this._vendorIn(0x95, 0x2518, 0, 2);
+      await this._vendorOut(0x9a, 0x2518, 0xc3);   // RX+TX enable, 8N1
+      await this._vendorIn(0x95, 0x0706, 0, 2);
+      await this._vendorOut(0xa1, 0x501f, 0xd90a);
+      await this._ch34xSetBaud(baud);
+    } else {
+      const lc = new DataView(new ArrayBuffer(7));
+      lc.setUint32(0, baud, true); lc.setUint8(4, 0); lc.setUint8(5, 0); lc.setUint8(6, 8);
+      await this.usb.controlTransferOut({ requestType: "class", recipient: "interface", request: 0x20, value: 0, index: this.ctrlIf }, lc.buffer);
+    }
+    await this._applySignals();
+
+    this.opened = true;
+    const self = this;
+    this.readable = new ReadableStream({
+      async pull(ctrl) {
+        if (!self.opened) { ctrl.close(); return; }
+        try {
+          const r = await self.usb.transferIn(self.dataIf.epIn, 4096);
+          if (r.status === "stall") { await self.usb.clearHalt("in", self.dataIf.epIn); return; }
+          if (r.data && r.data.byteLength) ctrl.enqueue(new Uint8Array(r.data.buffer.slice(r.data.byteOffset, r.data.byteOffset + r.data.byteLength)));
+        } catch (e) {
+          if (self.opened) ctrl.error(e); else ctrl.close();
+        }
+      },
+    }, { highWaterMark: 0 });
+    this.writable = new WritableStream({
+      async write(chunk) {
+        const r = await self.usb.transferOut(self.dataIf.epOut, chunk);
+        if (r.status !== "ok") throw new Error("USB write " + r.status);
+      },
+    });
+  }
+
+  async setSignals(sig = {}) {
+    if (sig.dataTerminalReady !== undefined) this.dtr = !!sig.dataTerminalReady;
+    if (sig.requestToSend !== undefined) this.rts = !!sig.requestToSend;
+    if (this.usb.opened) await this._applySignals();
+  }
+
+  async close() {
+    this.opened = false;
+    try { await this.readable?.cancel(); } catch {}
+    try { await this.writable?.abort(); } catch {}
+    this.readable = null; this.writable = null;
+    try { await this.usb.releaseInterface(this.dataIf.num); } catch {}
+    if (this.kind === "cdc" && this.ctrlIf !== this.dataIf.num) { try { await this.usb.releaseInterface(this.ctrlIf); } catch {} }
+    try { await this.usb.close(); } catch {}
+  }
+}
 
 const LAYOUTS = {
   merged: [{ key: "merged", name: "Merged bin", addr: 0x0 }],
@@ -130,10 +276,31 @@ let device = null, transport = null, esploader = null, busy = false;
 let monitor = { reader: null, running: false };
 const fileData = {}; // key -> { name, data(binary string) }
 
-if (!("serial" in navigator)) {
+const HAS_SERIAL = "serial" in navigator;
+const HAS_USB = "usb" in navigator;
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const CAN_CONNECT = HAS_SERIAL || HAS_USB;
+
+if (!CAN_CONNECT) {
   $("noSerial").style.display = "block";
-  $("btnConnect").disabled = true;
-  $("btnMonitor").disabled = true;
+} else {
+  const sel = $("transportSel");
+  if (!HAS_SERIAL) sel.querySelector('[value="serial"]').disabled = true;
+  if (!HAS_USB) sel.querySelector('[value="usb"]').disabled = true;
+  sel.value = (HAS_USB && (IS_ANDROID || !HAS_SERIAL)) ? "usb" : "serial";
+  sel.addEventListener("change", () => { device = null; log("เปลี่ยนเป็น " + sel.options[sel.selectedIndex].text); });
+}
+
+async function getPort() {
+  if (device) return device;
+  if ($("transportSel").value === "usb") {
+    const usbDev = await navigator.usb.requestDevice({ filters: USB_FILTERS });
+    device = new UsbSerialPort(usbDev);
+    log(`เลือกอุปกรณ์ USB: ${usbDev.productName || "USB-serial"} (VID ${usbDev.vendorId.toString(16)}:${usbDev.productId.toString(16)})`);
+  } else {
+    device = await navigator.serial.requestPort();
+  }
+  return device;
 }
 
 if (PRESET_FIRMWARE.url) {
@@ -198,11 +365,11 @@ function filesReady() {
 
 function updateButtons() {
   const connected = !!esploader;
-  $("btnConnect").disabled = busy || connected || !("serial" in navigator);
+  $("btnConnect").disabled = busy || connected || !CAN_CONNECT;
   $("btnDisconnect").disabled = busy || !connected;
   $("btnFlash").disabled = busy || !connected || !filesReady();
   $("btnErase").disabled = busy || !connected;
-  $("btnMonitor").disabled = busy || connected || !("serial" in navigator);
+  $("btnMonitor").disabled = busy || connected || !CAN_CONNECT;
 }
 
 document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", renderFiles));
@@ -213,7 +380,7 @@ $("btnConnect").onclick = async () => {
   try {
     busy = true; updateButtons();
     await stopMonitor();
-    if (!device) device = await navigator.serial.requestPort();
+    await getPort();
     transport = new Transport(device, false);
     esploader = new ESPLoader({ transport, baudrate: parseInt($("baud").value), terminal, debugLogging: false });
     const chip = await esploader.main();
@@ -223,6 +390,7 @@ $("btnConnect").onclick = async () => {
   } catch (err) {
     log("❌ เชื่อมต่อไม่สำเร็จ: " + (err.message || err));
     await cleanup();
+    device = null;
   } finally {
     busy = false; updateButtons();
   }
@@ -322,7 +490,7 @@ $("btnErase").onclick = async () => {
 $("btnMonitor").onclick = async () => {
   if (monitor.running) { await stopMonitor(); return; }
   try {
-    if (!device) device = await navigator.serial.requestPort();
+    await getPort();
     await device.open({ baudRate: 115200 });
     // reset บอร์ดให้รันโปรแกรมปกติ (ไม่เข้าโหมด boot)
     await device.setSignals({ dataTerminalReady: false, requestToSend: true });
